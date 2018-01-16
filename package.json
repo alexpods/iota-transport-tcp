@@ -2,7 +2,8 @@
   "name": "iota-transport-tcp",
   "version": "0.1.1",
   "description": "A transport for IOTA gateway that uses TCP for delivering transactions between neighbours",
-  "main": "index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "prepublish": "npm run build",
     "build": "tsc --project tsconfig.json",
