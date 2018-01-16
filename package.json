@@ -1,6 +1,6 @@
 {
   "name": "iota-transport-tcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A transport for IOTA gateway that uses TCP for delivering transactions between neighbours",
   "main": "index.js",
   "scripts": {
