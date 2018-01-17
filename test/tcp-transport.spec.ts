@@ -54,6 +54,7 @@ describe("TcpTransport", () => {
   describe("run()", () => {
     it("should start receiving new tcp connections", async () => {
       await expect(localTransport.run()).to.be.fulfilled
+      // TODO
     })
 
     it('should make isRunning flag return true', async () => {
@@ -199,6 +200,11 @@ describe("TcpTransport", () => {
       expect(localTransport.getNeighbor(remoteNeighbor.address)).to.equal(remoteNeighbor)
     })
 
+    it("should be rejected if the neighbor already exists", async () => {
+      await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.fulfilled
+      await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.rejected
+    })
+
     it("should try to connect to the specified neighbor if the transport is running", async () => {
       const server: Server = remoteTransport['_server']
       const connectionListener = spy()
@@ -236,11 +242,6 @@ describe("TcpTransport", () => {
       expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
     })
 
-    it("should be rejected if the neighbor already exists", async () => {
-      await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.fulfilled
-      await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.rejected
-    })
-
     it("should be able to send data to the specified neighbor after adding it to the transport", async () => {
       await expect(remoteTransport.addNeighbor(localNeighbor)).to.be.fulfilled
 
@@ -268,7 +269,7 @@ describe("TcpTransport", () => {
     })
   })
 
-  describe("remoteNeighbor(neighbor)", () => {
+  describe("removeNeighbor(neighbor)", () => {
     beforeEach(async () => {
       await localTransport.run()
       await remoteTransport.run()
