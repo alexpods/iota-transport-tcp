@@ -39,7 +39,7 @@ export class TcpTransport extends Transport {
     port: number
     packer?: Packer
     reconnectionInterval?: number
-  } = {}) {
+  }) {
     super()
     this._host = typeof params.host !== 'undefined' ? String(params.host) : undefined
     this._port = Number(params.port)
