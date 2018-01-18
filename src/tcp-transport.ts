@@ -1,9 +1,8 @@
 import { Server, Socket, createConnection } from 'net'
 import { crc32 } from 'crc'
+import { setTimeout, clearTimeout } from 'timers'
 import { Transport, Neighbor, Data, Packer, packer as globalPacker } from 'iota-gateway'
 import { TcpNeighbor } from './tcp-neighbor'
-import { setTimeout, clearTimeout } from 'timers';
-import { removeListener } from 'cluster';
 
 const BlockStream = require('block-stream')
 
