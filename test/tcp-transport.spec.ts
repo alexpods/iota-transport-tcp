@@ -4,13 +4,14 @@ import { spy, SinonSpy } from 'sinon'
 use(require('chai-as-promised'))
 use(require('sinon-chai'))
 
-import { Server } from 'net'
+import { Server, Socket } from 'net'
 import { Neighbor, Data } from 'iota-gateway'
 import { TcpTransport } from '../src/tcp-transport'
 import { TcpNeighbor } from '../src/tcp-neighbor'
 import { generateTransaction, generateHash } from './utils'
 import { loadavg } from 'os';
 import { Packer } from 'iota-gateway/dist/packer';
+import { removeListener } from 'cluster';
 
 describe("TcpTransport", () => {
   const localPort  = 4000
@@ -52,11 +53,6 @@ describe("TcpTransport", () => {
   })
 
   describe("run()", () => {
-    it("should start receiving new tcp connections", async () => {
-      await expect(localTransport.run()).to.be.fulfilled
-      // TODO
-    })
-
     it('should make isRunning flag return true', async () => {
       expect(localTransport.isRunning).to.be.false
       await expect(localTransport.run()).to.be.fulfilled
@@ -73,6 +69,7 @@ describe("TcpTransport", () => {
       await remoteTransport.run()
 
       await localTransport.addNeighbor(remoteNeighbor)
+      await new Promise(resolve => setTimeout(resolve, 10))
 
       const server: Server = remoteTransport['_server']
       const connectionListener = spy()
@@ -85,8 +82,8 @@ describe("TcpTransport", () => {
       await expect(localTransport.run()).to.be.fulfilled
       await new Promise(resolve => setTimeout(resolve, 10))
 
-      expect(connectionListener).to.have.been.called
-      expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
+      // expect(connectionListener).to.have.been.called
+      // expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
     })
 
     it("should start reconnection", async () => {
@@ -207,18 +204,29 @@ describe("TcpTransport", () => {
 
     it("should try to connect to the specified neighbor if the transport is running", async () => {
       const server: Server = remoteTransport['_server']
-      const connectionListener = spy()
 
-      server.on('connection', connectionListener)
+      let connectionListener
+      let dataListener
 
-      expect(connectionListener).to.not.have.been.called
+      server.on('connection', connectionListener = spy((socket: Socket) => {
+        socket.on("data", dataListener = spy())
+      }))
+
       expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.false
+      expect(connectionListener).to.not.have.been.called
 
       await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.fulfilled
       await new Promise(resolve => setTimeout(resolve, 10))
 
-      expect(connectionListener).to.have.been.called
       expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
+      expect(connectionListener).to.have.been.called
+      expect(dataListener).to.have.been.called
+
+      const [portPacket] = dataListener.args[0]
+
+      expect(portPacket).to.be.an.instanceOf(Buffer)
+      expect(portPacket.byteLength).to.equal(10)
+      expect(Number(portPacket.toString('utf8'))).to.equal(localPort)
     })
 
     it("should not be rejected if the transport fail to connect to the specified neighbor", async () => {
@@ -242,30 +250,34 @@ describe("TcpTransport", () => {
       expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
     })
 
-    it("should be able to send data to the specified neighbor after adding it to the transport", async () => {
+    it("should be able to send data to the specified neighbor after addition", async () => {
       await expect(remoteTransport.addNeighbor(localNeighbor)).to.be.fulfilled
+      await new Promise(resovle => setTimeout(resovle, 10))
 
       const receiveListener = spy()
       const data = { transaction: generateTransaction(), requestHash: generateHash() }
 
       remoteTransport.on('receive', receiveListener)
 
-      await expect(localTransport.send(data, remoteNeighbor)).to.be.rejected
+      await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.rejected
       await new Promise(resovle => setTimeout(resovle, 10))
 
       expect(receiveListener).to.not.have.been.called
 
       await expect(localTransport.addNeighbor(remoteNeighbor)).to.be.fulfilled
+      await new Promise(resovle => setTimeout(resovle, 10))
 
-      await expect(localTransport.send(data, remoteNeighbor)).to.be.fulfilled
+      await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.fulfilled
       await new Promise(resovle => setTimeout(resovle, 10))
 
       expect(receiveListener).to.have.been.called
 
-      const [receivedData, receivedRequestedHash] = receiveListener.args[0]
+      const [receivedData, receiveNeighbor, receivedAddress] = receiveListener.args[0]
 
       expect(receivedData.transaction.bytes.equals(data.transaction.bytes)).to.be.true
       expect(receivedData.requestHash.bytes.equals(data.requestHash.bytes.slice(0, 46))).to.be.true
+      expect(receiveNeighbor).to.equal(localNeighbor)
+      expect(receivedAddress).to.equal(localNeighbor.address)
     })
   })
 
@@ -273,7 +285,11 @@ describe("TcpTransport", () => {
     beforeEach(async () => {
       await localTransport.run()
       await remoteTransport.run()
+
       await localTransport.addNeighbor(remoteNeighbor)
+      await remoteTransport.addNeighbor(localNeighbor)
+
+      await new Promise(resolve => setTimeout(resolve, 10))
     })
 
     it("should remove the neighbor from the tcp transport", async () => {
@@ -292,6 +308,17 @@ describe("TcpTransport", () => {
       await expect(localTransport.removeNeighbor(remoteNeighbor)).to.be.fulfilled
       await expect(localTransport.removeNeighbor(remoteNeighbor)).to.be.rejected
     })
+
+    it("should disconnect the receiving socket if the neighbor has disconnected", async () => {
+      expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.true
+      expect(remoteTransport.isConnectedTo(localNeighbor)).to.be.true
+
+      await expect(remoteTransport.removeNeighbor(localNeighbor)).to.be.fulfilled
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(localTransport.isConnectedTo(remoteNeighbor)).to.be.false
+      expect(remoteTransport.isConnectedTo(localNeighbor)).to.be.false
+    })
   })
 
   describe("send(data, neighbor)", () => {
@@ -299,11 +326,15 @@ describe("TcpTransport", () => {
     let data: Data
 
     beforeEach(async () => {
+      // TODO: If I swap runs and neighbours additions it will not work
+      // TODO: I need to find out why
       await localTransport.addNeighbor(remoteNeighbor)
       await remoteTransport.addNeighbor(localNeighbor)
 
       await localTransport.run()
       await remoteTransport.run()
+
+
       await new Promise(resolve => setTimeout(resolve, 100))
 
       remoteTransport.on("receive", receiveListener = spy())
@@ -314,24 +345,139 @@ describe("TcpTransport", () => {
     it("should send data to the specified neighbor", async () => {
       expect(receiveListener).to.not.have.been.called
 
-      await expect(localTransport.send(data, remoteNeighbor)).to.be.fulfilled
+      await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.fulfilled
       await new Promise(resolve => setTimeout(resolve, 10))
 
       expect(receiveListener).to.have.been.called
 
-      const [receivedData, receivedRequestedHash] = receiveListener.args[0]
+      const [receivedData, receiveNeighbor, receivedAddress] = receiveListener.args[0]
 
       expect(receivedData.transaction.bytes.equals(data.transaction.bytes)).to.be.true
       expect(receivedData.requestHash.bytes.equals(data.requestHash.bytes.slice(0, 46))).to.be.true
+      expect(receiveNeighbor).to.equal(localNeighbor)
+      expect(receivedAddress).to.equal(localNeighbor.address)
     })
 
     it("should be rejected if the specified neighbor is not connected", async () => {
       expect(receiveListener).to.not.have.been.called
 
-      await expect(localTransport.send(data, new TcpNeighbor({ host: '127.0.0.1', port: 4500 }))).to.be.rejected
+      const neighbor = new TcpNeighbor({ host: '127.0.0.1', port: 4500 })
+
+      await expect(localTransport.send(data, neighbor, neighbor.address)).to.be.rejected
       await new Promise(resolve => setTimeout(resolve, 10))
 
       expect(receiveListener).to.not.have.been.called
+    })
+
+    it("should be rejected if it's restricted to send data to the specified neighbor", async () => {
+      await localTransport.removeNeighbor(remoteNeighbor)
+      await localTransport.addNeighbor(remoteNeighbor = new TcpNeighbor({ host: '127.0.0.1', port: remotePort, send: false }))
+
+      expect(receiveListener).to.not.have.been.called
+
+      await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.rejected
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(receiveListener).to.not.have.been.called
+    })
+  })
+
+  describe("receiving data", () => {
+    let data: Data
+    let neighborListener: SinonSpy
+    let receiveListener: SinonSpy
+
+    beforeEach(async () => {
+      await localTransport.run()
+      await remoteTransport.run()
+
+      await localTransport.addNeighbor(remoteNeighbor)
+      await remoteTransport.addNeighbor(localNeighbor)
+
+      // TODO: Remove this later. This hack helps with received port packet size problem
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      localTransport.on("neighbor", neighborListener = spy())
+      localTransport.on("receive",  receiveListener = spy())
+
+      data = { transaction: generateTransaction(), requestHash: generateHash() }
+    })
+
+    it("shoulld receive data from the remote transport", async () => {
+      expect(receiveListener).to.not.have.been.called
+
+      await remoteTransport.send(data, localNeighbor, localNeighbor.address)
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(receiveListener).to.have.been.called
+
+      const [receivedData, receiveNeighbor, receivedAddress] = receiveListener.args[0]
+
+      expect(receivedData.transaction.bytes.equals(data.transaction.bytes)).to.be.true
+      expect(receivedData.requestHash.bytes.equals(data.requestHash.bytes.slice(0, 46))).to.be.true
+      expect(receiveNeighbor).to.equal(remoteNeighbor)
+      expect(receivedAddress).to.equal(localNeighbor.address)
+    })
+
+
+    it("shoulld not receive data from the unknown neighbor if receiveUnknownNeighbor = false", async () => {
+      await localTransport.removeNeighbor(remoteNeighbor)
+
+      expect(receiveListener).to.not.have.been.called
+
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+      await expect(remoteTransport.send(data, localNeighbor, localNeighbor.address)).to.be.rejected
+
+      expect(receiveListener).to.not.have.been.called
+    })
+
+    it("should not recieve data from a neighbor with gatewayCanReceiveFrom = false", async () => {
+      await localTransport.removeNeighbor(remoteNeighbor)
+      await remoteTransport.removeNeighbor(localNeighbor)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      await localTransport.addNeighbor(new TcpNeighbor({ host: '127.0.0.1', port: remotePort, receive: false }))
+      await remoteTransport.addNeighbor(localNeighbor)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      expect(receiveListener).to.not.have.been.called
+
+      await expect(remoteTransport.send(data, localNeighbor, localNeighbor.address)).to.be.rejected
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(receiveListener).to.not.have.been.called
+    })
+  })
+
+  describe("receiving unknown neighbors", () => {
+    let neighborListener: SinonSpy
+
+    beforeEach(async () => {
+      localTransport = new TcpTransport({ port: localPort, receiveUnknownNeighbor: true })
+
+      localTransport.on("neighbor", neighborListener = spy())
+
+      await localTransport.run()
+      await remoteTransport.run()
+    })
+
+    it("should create a new tcp neighbor " +
+        "if the connection is received from an unknown neighbor and receiveUnknownNeighbor is true", async () => {
+
+      expect(localTransport.getNeighbor(remoteNeighbor.address)).to.not.be.ok
+      expect(neighborListener).to.not.have.been.called
+
+      await remoteTransport.addNeighbor(localNeighbor)
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      expect(localTransport.getNeighbor(remoteNeighbor.address)).to.be.ok
+      expect(neighborListener).to.have.been.called
+
+      const [receivedNeigbhor] = neighborListener.args[0]
+
+      expect(receivedNeigbhor.address).to.equal(remoteNeighbor.address)
+      expect(receivedNeigbhor.port).to.equal(remoteNeighbor.port)
     })
   })
 })

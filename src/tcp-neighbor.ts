@@ -40,10 +40,6 @@ export class TcpNeighbor extends Neighbor {
 
 
   match(neighborAddress: string): boolean {
-    if (neighborAddress.startsWith('::ffff:') && neighborAddress.endsWith(this._host)) {
-      return true
-    }
-
     return neighborAddress === this._host
   }
 
