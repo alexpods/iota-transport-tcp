@@ -189,6 +189,8 @@ describe("TcpTransport", () => {
     beforeEach(async () => {
       await localTransport.run()
       await remoteTransport.run()
+
+      await remoteTransport.addNeighbor(localNeighbor)
     })
 
     it("should add neighbor to the tcp transport", async () => {
@@ -251,9 +253,6 @@ describe("TcpTransport", () => {
     })
 
     it("should be able to send data to the specified neighbor after addition", async () => {
-      await expect(remoteTransport.addNeighbor(localNeighbor)).to.be.fulfilled
-      await new Promise(resovle => setTimeout(resovle, 10))
-
       const receiveListener = spy()
       const data = { transaction: generateTransaction(), requestHash: generateHash() }
 

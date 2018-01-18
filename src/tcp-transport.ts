@@ -91,6 +91,8 @@ export class TcpTransport extends Transport {
       throw new Error(`Couldn't add a neighbor: the neighbor '${neighbor.address}' already exists!`)
     }
 
+    this._neighbors.add(neighbor)
+
     if (this._isRunning) {
       try {
         await this._connect(neighbor)
@@ -98,8 +100,6 @@ export class TcpTransport extends Transport {
         this._neighborsToReconnect.add(neighbor)
       }
     }
-
-    this._neighbors.add(neighbor)
   }
 
   async removeNeighbor(neighbor: TcpNeighbor): Promise<void> {
@@ -321,7 +321,6 @@ export class TcpTransport extends Transport {
       socket.connect({ host: address, port, family: 4 })
     })
 
-
     const portPacket = new Buffer(String(this._port).padStart(10, '0'), 'utf8')
 
     await new Promise(resolve => socket.write(portPacket, resolve))
@@ -421,6 +420,8 @@ export class TcpTransport extends Transport {
         this.addNeighbor(neighbor)
         this.emit("neighbor", neighbor)
       } else {
+        socket.once("error", () => {})
+        socket.destroy()
         return
       }
     }
