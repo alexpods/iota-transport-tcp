@@ -325,14 +325,11 @@ describe("TcpTransport", () => {
     let data: Data
 
     beforeEach(async () => {
-      // TODO: If I swap runs and neighbours additions it will not work
-      // TODO: I need to find out why
-      await localTransport.addNeighbor(remoteNeighbor)
-      await remoteTransport.addNeighbor(localNeighbor)
-
       await localTransport.run()
       await remoteTransport.run()
 
+      await localTransport.addNeighbor(remoteNeighbor)
+      await remoteTransport.addNeighbor(localNeighbor)
 
       await new Promise(resolve => setTimeout(resolve, 100))
 
@@ -344,17 +341,21 @@ describe("TcpTransport", () => {
     it("should send data to the specified neighbor", async () => {
       expect(receiveListener).to.not.have.been.called
 
-      await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.fulfilled
-      await new Promise(resolve => setTimeout(resolve, 10))
+      for (let i = 0; i < 3; ++i) {
+        const data = { transaction: generateTransaction(), requestHash: generateHash() }
 
-      expect(receiveListener).to.have.been.called
+        await expect(localTransport.send(data, remoteNeighbor, remoteNeighbor.address)).to.be.fulfilled
+        await new Promise(resolve => setTimeout(resolve, 10))
 
-      const [receivedData, receiveNeighbor, receivedAddress] = receiveListener.args[0]
+        expect(receiveListener).to.have.been.called
 
-      expect(receivedData.transaction.bytes.equals(data.transaction.bytes)).to.be.true
-      expect(receivedData.requestHash.bytes.equals(data.requestHash.bytes.slice(0, 46))).to.be.true
-      expect(receiveNeighbor).to.equal(localNeighbor)
-      expect(receivedAddress).to.equal(localNeighbor.address)
+        const [receivedData, receiveNeighbor, receivedAddress] = receiveListener.args[i]
+
+        expect(receivedData.transaction.bytes.equals(data.transaction.bytes)).to.be.true
+        expect(receivedData.requestHash.bytes.equals(data.requestHash.bytes.slice(0, 46))).to.be.true
+        expect(receiveNeighbor).to.equal(localNeighbor)
+        expect(receivedAddress).to.equal(localNeighbor.address)
+      }
     })
 
     it("should be rejected if the specified neighbor is not connected", async () => {

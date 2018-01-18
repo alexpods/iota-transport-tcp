@@ -42,6 +42,4 @@ export class TcpNeighbor extends Neighbor {
   match(neighborAddress: string): boolean {
     return neighborAddress === this._host
   }
-
-
 }

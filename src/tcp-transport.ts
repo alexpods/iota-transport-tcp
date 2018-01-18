@@ -1,15 +1,13 @@
 import { Server, Socket, createConnection } from 'net'
-import { Serializer, Factory } from 'iota-tangle'
-import { Transport, Neighbor, Data, Packer } from 'iota-gateway'
+import { crc32 } from 'crc'
+import { Transport, Neighbor, Data, Packer, packer as globalPacker } from 'iota-gateway'
 import { TcpNeighbor } from './tcp-neighbor'
 import { setTimeout, clearTimeout } from 'timers';
 import { removeListener } from 'cluster';
 
 const BlockStream = require('block-stream')
 
-const globalSerializer = new Serializer()
-const globalFactory    = new Factory({ serializer: globalSerializer })
-const globalPacker     = new Packer({ factory: globalFactory })
+export const CRC32_SIZE = 16
 
 // String fmt = "%0"+String.valueOf(10)+"d";
 // System.out.println(String.format(fmt, 1440));
@@ -220,7 +218,13 @@ export class TcpTransport extends Transport {
       throw new Error(`The neighbor "${neighbor.address}" is not connected!`)
     }
 
-    await new Promise(resolve => socket.write(this._packer.pack(data), resolve))
+    const packet    = this._packer.pack(data)
+    const checksome = this._calculateChecksome(packet)
+
+    await Promise.all([
+      new Promise(resolve => socket.write(packet,    resolve)),
+      new Promise(resolve => socket.write(checksome, resolve)),
+    ])
   }
 
 
@@ -459,10 +463,19 @@ export class TcpTransport extends Transport {
     let onData, onError, onClose
 
     const address = socket.address().address
-    const stream = socket.pipe(new BlockStream(this._packer.packetSize))
 
-    stream.on("data", onData = (packet: Buffer) => {
-      this.emit("receive", this._packer.unpack(packet), neighbor, address)
+    const packetSize    = this._packer.packetSize
+    const messageSize   = packetSize + CRC32_SIZE
+
+    const stream = socket.pipe(new BlockStream(messageSize))
+
+    stream.on("data", onData = (message: Buffer) => {
+      const packet    = message.slice(0, packetSize)
+      const checksome = message.slice(packetSize, messageSize)
+
+      if (this._calculateChecksome(packet).equals(checksome)) {
+        this.emit("receive", this._packer.unpack(packet), neighbor, address)
+      }
     })
 
     socket.on("error", onError = (error: any) => {
@@ -480,5 +493,9 @@ export class TcpTransport extends Transport {
     })
 
     this._receiveSockets.set(neighbor, socket)
+  }
+
+  private _calculateChecksome(packet: Buffer): Buffer {
+    return new Buffer(crc32(packet).toString(16).padStart(CRC32_SIZE), 'utf8')
   }
 }
